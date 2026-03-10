@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head></head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>MonoAI - Pro Edition</title>
+    
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <script src="https://unpkg.com/marked@12.0.0/marked.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/@highlightjs/cdn-assets@11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://unpkg.com/@highlightjs/cdn-assets@11.9.0/highlight.min.js"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: { colors: { gray: { 750: '#2f2f2f', 850: '#212121', 900: '#171717', 950: '#0d0d0d' } } } }
+        }
+    </script>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; background: #ffffff; color: #0f0f0f; }
+        .dark body { background: #212121; color: #ececec; }
+        ::-webkit-scrollbar { width: 6px; background-color: transparent; }
+        ::-webkit-scrollbar-thumb { background-color: rgba(156, 163, 175, 0.3); border-radius: 9999px; }
+        .markdown-body p { margin-bottom: 1rem; line-height: 1.6; }
+        .markdown-body pre { background: #0d0d0d !important; padding: 1rem; border-radius: 0.75rem; overflow-x: auto; position: relative; margin-bottom: 1rem;}
+        .markdown-body code:not(pre code) { background: rgba(156,163,175,0.2); padding: 0.15rem 0.3rem; border-radius: 0.375rem; font-size: 0.85em; }
+    </style>
+</head>
+<body>
+<div id="app" class="h-screen w-full flex overflow-hidden transition-colors duration-300">
+    
+    <div v-if="!isConfigured" class="fixed inset-0 z-50 bg-[#171717] flex items-center justify-center p-4">
+        <div class="bg-[#212121] max-w-md w-full rounded-3xl p-8 shadow-2xl border border-gray-800 text-gray-200">
+            <div class="text-center mb-8">
+                <i class="ph-duotone ph-planet text-5xl text-blue-500 mb-3"></i>
+                <h1 class="text-2xl font-bold text-white">MonoAI Setup</h1>
+                <p class="text-sm text-gray-400 mt-2">请配置数据库和 API 信息</p>
+            </div>
+            <div class="space-y-4 text-sm">
+                <div><label class="block mb-1 text-gray-400">Supabase URL</label><input v-model="tempConfig.supabaseUrl" class="w-full p-3 bg-[#171717] border border-gray-700 rounded-xl outline-none focus:border-blue-500" placeholder="https://xxx.supabase.co"></div>
+                <div><label class="block mb-1 text-gray-400">Supabase Anon Key</label><input v-model="tempConfig.supabaseKey" type="password" class="w-full p-3 bg-[#171717] border border-gray-700 rounded-xl outline-none focus:border-blue-500" placeholder="eyJhbGci..."></div>
+                <div class="pt-4 border-t border-gray-800"><label class="block mb-1 text-gray-400">LLM API Key</label><input v-model="tempConfig.apiKey" type="password" class="w-full p-3 bg-[#171717] border border-gray-700 rounded-xl outline-none focus:border-blue-500" placeholder="sk-..."></div>
+            </div>
+            <button @click="saveAndInit" class="w-full mt-8 bg-white text-black font-semibold py-3 rounded-xl hover:bg-gray-200 transition-colors">开始使用</button>
+        </div>
+    </div>
+
+    <div :class="showSidebar ? 'translate-x-0' : '-translate-x-full md:translate-x-0'" class="fixed md:static inset-y-0 left-0 z-40 w-[260px] bg-gray-50 dark:bg-[#171717] flex flex-col transition-transform duration-300 border-r border-gray-200 dark:border-gray-800">
+        <div class="p-3">
+            <button @click="createNewSession" class="w-full flex items-center justify-between hover:bg-gray-200 dark:hover:bg-gray-800 px-3 py-2 rounded-xl transition-colors text-sm font-medium">
+                <div class="flex items-center gap-2"><div class="bg-white dark:bg-gray-700 p-1 rounded-full border dark:border-gray-600"><i class="ph ph-plus"></i></div>新对话</div>
+                <i class="ph ph-note-pencil text-gray-400"></i>
+            </button>
+        </div>
+        <div class="flex-1 overflow-y-auto px-3 mt-2 space-y-0.5">
+            <div v-for="session in sessions" :key="session.id" @click="loadSession(session.id)"
+                 :class="currentSessionId === session.id ? 'bg-gray-200 dark:bg-gray-800' : 'hover:bg-gray-100 dark:hover:bg-gray-800/50'"
+                 class="group relative cursor-pointer flex items-center justify-between text-sm rounded-lg px-3 py-2.5 transition-colors">
+                <span class="truncate pr-4">{{ session.title || '新对话' }}</span>
+                <button @click.stop="deleteSession(session.id)" class="hidden group-hover:block absolute right-2 text-gray-400 hover:text-red-500"><i class="ph ph-trash"></i></button>
+            </div>
+        </div>
+        <div class="p-3 border-t border-gray-200 dark:border-gray-800">
+            <button @click="showSettings = true" class="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors text-sm font-medium">
+                <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white shrink-0"><i class="ph-fill ph-gear"></i></div>
+                <span class="flex-1 text-left">设置与配置</span>
+            </button>
+        </div>
+    </div>
+
+    <div v-if="isConfigured" class="flex-1 flex flex-col bg-white dark:bg-[#212121] relative min-w-0">
+        <div class="h-14 flex items-center justify-between px-4 z-10 sticky top-0 backdrop-blur-md border-b border-transparent dark:border-gray-800">
+            <button @click="showSidebar = true" class="md:hidden p-2 -ml-2 text-gray-500 rounded-lg"><i class="ph ph-list text-xl"></i></button>
+            <div class="font-medium text-sm text-gray-600 dark:text-gray-300 px-3 py-1 bg-gray-100 dark:bg-[#171717] rounded-full">{{ appConfig.model }}</div>
+            <button @click="toggleTheme" class="p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"><i :class="isDark?'ph-sun':'ph-moon'" class="ph text-xl"></i></button>
+        </div>
+
+        <div ref="chatContainer" @scroll="handleScroll" class="flex-1 overflow-y-auto px-4 pb-32 scroll-smooth">
+            <div class="max-w-3xl mx-auto flex flex-col pt-8 pb-4">
+                <div v-if="messages.length === 0" class="flex flex-col items-center justify-center h-[50vh] text-center opacity-50">
+                    <i class="ph-duotone ph-planet text-5xl mb-4"></i>
+                    <h2 class="text-xl font-medium">你好，我是 MonoAI</h2>
+                </div>
+
+                <div v-for="msg in messages" :key="msg.id" class="w-full flex flex-col mb-6 group">
+                    <div v-if="msg.role === 'user'" class="flex flex-col items-end w-full">
+                        <button @click="openEditModal(msg)" class="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-200 mb-1 mr-2 transition-opacity"><i class="ph ph-pencil-simple"></i></button>
+                        <div class="max-w-[85%] bg-gray-100 dark:bg-gray-750 px-5 py-3 rounded-3xl rounded-tr-sm whitespace-pre-wrap text-[15px] leading-relaxed">{{ msg.content }}</div>
+                    </div>
+                    <div v-if="msg.role === 'assistant'" class="flex w-full gap-4 max-w-full">
+                        <div class="w-8 h-8 rounded-full border border-gray-200 dark:border-gray-700 flex items-center justify-center shrink-0 bg-white dark:bg-[#171717] mt-0.5 shadow-sm"><i class="ph-fill ph-planet text-gray-500 dark:text-gray-300"></i></div>
+                        <div class="flex-1 min-w-0">
+                            <div v-if="msg.status === 'generating' && !msg.content" class="flex items-center gap-1 mt-2">
+                                <span class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 0ms"></span>
+                                <span class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 150ms"></span>
+                                <span class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay: 300ms"></span>
+                            </div>
+                            <div class="markdown-body text-[15px] break-words" v-html="renderMarkdown(msg.content)"></div>
+                            
+                            <div v-if="msg.status === 'error'" class="text-red-500 text-sm mt-2 flex items-center gap-1"><i class="ph-fill ph-warning-circle"></i> 生成遇到错误，请重试。</div>
+
+                            <div v-if="msg.content" class="flex items-center gap-2 mt-2 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400">
+                                <button @click="copyText(msg.content)" class="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800" title="复制"><i class="ph ph-copy"></i></button>
+                                <button @click="regenerate(msg)" class="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800" title="重新生成"><i class="ph ph-arrows-clockwise"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-white dark:from-[#212121] via-white/90 dark:via-[#212121]/90 to-transparent">
+            <div class="max-w-3xl mx-auto relative flex flex-col items-center">
+                <button v-if="isLoading" @click="stopGeneration" class="absolute -top-14 flex items-center gap-2 bg-black text-white dark:bg-white dark:text-black px-4 py-2 rounded-full text-sm font-medium shadow-lg hover:scale-105 transition-transform"><i class="ph-fill ph-stop-circle text-lg"></i> 停止生成</button>
+                
+                <div class="w-full bg-gray-100 dark:bg-gray-750 rounded-[24px] p-2 relative flex items-end shadow-sm focus-within:ring-1 focus-within:ring-gray-400 transition-shadow">
+                    <button class="p-2.5 text-gray-400 hover:text-gray-200 shrink-0"><i class="ph ph-paperclip text-xl"></i></button>
+                    <textarea ref="inputBox" v-model="input" @keydown="handleEnter" :disabled="isLoading" rows="1" placeholder="发送消息..." class="w-full max-h-48 bg-transparent p-2 outline-none resize-none text-[15px] overflow-y-auto leading-relaxed"></textarea>
+                    <button @click="sendMessage" :disabled="!input.trim() || isLoading" class="p-2.5 shrink-0 rounded-full text-white transition-colors ml-1 mb-0.5" :class="input.trim() && !isLoading ? 'bg-black dark:bg-white dark:text-black' : 'bg-gray-300 dark:bg-gray-600 text-gray-400'"><i class="ph-fill ph-arrow-up text-xl"></i></button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="showSettings" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+        <div class="bg-white dark:bg-[#212121] w-full max-w-lg rounded-2xl p-6 shadow-2xl relative border dark:border-gray-800 max-h-[90vh] overflow-y-auto">
+            <h2 class="text-xl font-semibold mb-6">全局设置</h2>
+            <div class="space-y-5 text-sm">
+                <div class="p-4 bg-gray-50 dark:bg-[#171717] rounded-xl space-y-3">
+                    <h3 class="font-medium text-blue-500 mb-2"><i class="ph ph-database"></i> 数据库</h3>
+                    <div><label class="block mb-1 text-gray-500">Project URL</label><input v-model="tempConfig.supabaseUrl" class="w-full p-2.5 bg-white dark:bg-[#212121] border dark:border-gray-700 rounded-lg outline-none"></div>
+                    <div><label class="block mb-1 text-gray-500">Anon Key</label><input v-model="tempConfig.supabaseKey" type="password" class="w-full p-2.5 bg-white dark:bg-[#212121] border dark:border-gray-700 rounded-lg outline-none"></div>
+                </div>
+                <div class="p-4 bg-gray-50 dark:bg-[#171717] rounded-xl space-y-3">
+                    <h3 class="font-medium text-purple-500 mb-2"><i class="ph ph-cpu"></i> LLM 模型</h3>
+                    <div><label class="block mb-1 text-gray-500">API Base URL</label><input v-model="tempConfig.baseUrl" class="w-full p-2.5 bg-white dark:bg-[#212121] border dark:border-gray-700 rounded-lg outline-none"></div>
+                    <div><label class="block mb-1 text-gray-500">API Key</label><input v-model="tempConfig.apiKey" type="password" class="w-full p-2.5 bg-white dark:bg-[#212121] border dark:border-gray-700 rounded-lg outline-none"></div>
+                    <div><label class="block mb-1 text-gray-500">Model</label><input v-model="tempConfig.model" class="w-full p-2.5 bg-white dark:bg-[#212121] border dark:border-gray-700 rounded-lg outline-none"></div>
+                    <div><label class="block mb-1 text-gray-500">系统提示词 (System Prompt)</label><textarea v-model="tempConfig.systemPrompt" rows="3" class="w-full p-2.5 bg-white dark:bg-[#212121] border dark:border-gray-700 rounded-lg outline-none resize-none"></textarea></div>
+                </div>
+            </div>
+            <div class="mt-6 flex justify-end gap-3">
+                <button @click="showSettings = false" class="px-5 py-2.5 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">取消</button>
+                <button @click="saveAndInit" class="px-5 py-2.5 rounded-xl bg-black text-white dark:bg-white dark:text-black font-medium">保存配置</button>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="editingMessage" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+        <div class="bg-white dark:bg-[#212121] w-full max-w-2xl rounded-2xl p-6 shadow-2xl border dark:border-gray-800">
+            <h2 class="text-lg font-semibold mb-2">编辑并重发</h2>
+            <p class="text-xs text-gray-500 mb-4 text-orange-500">注意：提交后将截断此消息之后的所有上下文并重写时间线。</p>
+            <textarea v-model="editText" rows="6" class="w-full p-3 bg-gray-50 dark:bg-[#171717] border dark:border-gray-700 rounded-xl outline-none resize-none focus:ring-1 focus:ring-blue-500"></textarea>
+            <div class="mt-4 flex justify-end gap-3">
+                <button @click="editingMessage = null" class="px-4 py-2 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800">取消</button>
+                <button @click="saveEdit" class="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white">提交修改</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const { createApp, ref, onMounted, nextTick, watch } = Vue;
+
+    createApp({
+        setup() {
+            // UI State
+            const showSidebar = ref(false);
+            const showSettings = ref(false);
+            const isDark = ref(true);
+            const isLoading = ref(false);
+            const isConfigured = ref(false);
+            
+            // Chat State
+            const sessions = ref([]);
+            const currentSessionId = ref(null);
+            const messages = ref([]);
+            const input = ref('');
+            const editingMessage = ref(null);
+            const editText = ref('');
+            
+            // DOM & Utils
+            const chatContainer = ref(null);
+            const inputBox = ref(null);
+            let isScrolledToBottom = true;
+            let supabaseClient = null;
+            let realtimeChannel = null;
+
+            // Config State
+            const defaultConfig = { supabaseUrl: '', supabaseKey: '', baseUrl: 'https://api.openai.com/v1', apiKey: '', model: 'gpt-3.5-turbo', systemPrompt: '' };
+            const appConfig = ref(JSON.parse(localStorage.getItem('monoai_config')) || { ...defaultConfig });
+            const tempConfig = ref({ ...appConfig.value });
+
+            // UUID V4 Generator (本地唯一主键，解决所有冲突)
+            const generateUUID = () => {
+                if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+                return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+                    const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8); return v.toString(16);
+                });
+            };
+
+            onMounted(() => {
+                const storedTheme = localStorage.getItem('monoai_theme');
+                if(storedTheme === 'light') { isDark.value = false; document.documentElement.classList.remove('dark'); }
+                if (appConfig.value.supabaseUrl && appConfig.value.supabaseKey) initSupabase();
+            });
+
+            // ======= DB Initialization =======
+            const initSupabase = () => {
+                try {
+                    supabaseClient = window.supabase.createClient(appConfig.value.supabaseUrl, appConfig.value.supabaseKey);
+                    isConfigured.value = true;
+                    loadSessions();
+                } catch (e) {
+                    alert("Supabase 连接失败，请检查 URL 和 Key");
+                    isConfigured.value = false;
+                }
+            };
+
+            const saveAndInit = () => {
+                if(!tempConfig.value.supabaseUrl || !tempConfig.value.supabaseKey) return alert("数据库信息必填");
+                appConfig.value = { ...tempConfig.value };
+                localStorage.setItem('monoai_config', JSON.stringify(appConfig.value));
+                showSettings.value = false;
+                initSupabase();
+            };
+
+            const toggleTheme = () => {
+                isDark.value = !isDark.value;
+                document.documentElement.classList.toggle('dark', isDark.value);
+                localStorage.setItem('monoai_theme', isDark.value ? 'dark' : 'light');
+            };
+
+            // ======= Sessions Logic =======
+            // ======= Sessions Logic =======
+            const loadSessions = async () => {
+                // 【修复】：将 updated_at 改为了所有表都默认存在的 created_at
+                const { data, error } = await supabaseClient.from('sessions')
+                    .select('*')
+                    .order('created_at', { ascending: false });
+                
+                if (error) {
+                    console.error("❌ 加载会话列表失败:", error);
+                    alert("获取历史对话失败，请检查数据库权限或字段: " + error.message);
+                    return;
+                }
+
+                sessions.value = data || [];
+                
+                if (sessions.value.length > 0 && !currentSessionId.value) {
+                    await loadSession(sessions.value[0].id);
+                } else if (sessions.value.length === 0) {
+                    await createNewSession();
+                }
+            };
+
+            const createNewSession = async () => {
+                const { data } = await supabaseClient.from('sessions').insert({ title: '新对话' }).select().single();
+                if(data) {
+                    sessions.value.unshift(data);
+                    await loadSession(data.id);
+                    if(window.innerWidth < 768) showSidebar.value = false;
+                }
+            };
+
+            const deleteSession = async (id) => {
+                await supabaseClient.from('sessions').delete().eq('id', id);
+                sessions.value = sessions.value.filter(s => s.id !== id);
+                if (currentSessionId.value === id) {
+                    sessions.value.length > 0 ? loadSession(sessions.value[0].id) : createNewSession();
+                }
+            };
+
+            const loadSession = async (id) => {
+                currentSessionId.value = id;
+                messages.value = [];
+                isLoading.value = false;
+                
+                const { data, error } = await supabaseClient.from('messages')
+                    .select('*')
+                    .eq('session_id', id)
+                    .order('created_at', { ascending: true });
+                
+                if (error) {
+                    console.error("❌ 加载聊天记录失败:", error);
+                    alert("获取聊天记录失败: " + error.message);
+                }
+
+                messages.value = data || [];
+                
+                isScrolledToBottom = true; 
+                scrollToBottom();
+                subscribeRealtime(id);
+                
+                if(window.innerWidth < 768) showSidebar.value = false;
+            };
+
+
+            // ======= Realtime: 重构后的轻量级状态同步器 =======
+            const subscribeRealtime = (sessionId) => {
+                if (realtimeChannel) supabaseClient.removeChannel(realtimeChannel);
+                realtimeChannel = supabaseClient.channel(`session_${sessionId}`)
+                    .on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `session_id=eq.${sessionId}` }, payload => {
+                        const { eventType, new: newRec, old: oldRec } = payload;
+                        
+                        // INSERT: 只有当本地不存在这条 UUID 时，才 Push (防止本地发消息时的幽灵闪烁)
+                        if (eventType === 'INSERT') {
+                            const exists = messages.value.find(m => m.id === newRec.id);
+                            if (!exists) {
+                                messages.value.push(newRec); 
+                                smartScroll();
+                            }
+                        } 
+                        // UPDATE: 无缝接管云端大模型发来的流式字打
+                        else if (eventType === 'UPDATE') {
+                            const idx = messages.value.findIndex(m => m.id === newRec.id);
+                            if (idx !== -1) {
+                                messages.value[idx] = newRec;
+                                // 监测生成完成，生成标题
+                                if (['completed', 'error', 'stopped'].includes(newRec.status)) {
+                                    isLoading.value = false;
+                                    if(messages.value.length === 2 && sessions.value.find(s=>s.id===sessionId)?.title === '新对话') {
+                                        const t = messages.value[0].content.slice(0, 15);
+                                        supabaseClient.from('sessions').update({ title: t }).eq('id', sessionId).then();
+                                        sessions.value.find(s=>s.id===sessionId).title = t;
+                                    }
+                                }
+                                smartScroll();
+                            }
+                        } 
+                        // DELETE: 精准同步其他端被删掉的记录
+                        else if (eventType === 'DELETE') {
+                            messages.value = messages.value.filter(m => m.id !== oldRec.id);
+                        }
+                    }).subscribe();
+            };
+
+            // ======= 核心对话逻辑 (原子化写入与切片) =======
+            
+            // 触发大模型 (边缘函数现在是无状态的，只负责更新指定 ID)
+            const triggerCloudFunc = async (aiMessageId) => {
+                if (!appConfig.value.apiKey) { showSettings.value = true; return alert("请先配置 API Key"); }
+                isLoading.value = true; isScrolledToBottom = true; scrollToBottom();
+                try {
+                    await supabaseClient.functions.invoke('chat', { body: { 
+                        sessionId: currentSessionId.value, 
+                        aiMessageId: aiMessageId, // 明确告诉云函数该更新哪条记录
+                        llmConfig: appConfig.value, 
+                        supabaseConfig: { url: appConfig.value.supabaseUrl, key: appConfig.value.supabaseKey }
+                    }});
+                } catch(e) { isLoading.value = false; alert("触发边缘函数失败"); }
+            };
+
+            const sendMessage = async () => {
+                const text = input.value.trim();
+                if (!text || isLoading.value) return;
+                input.value = ''; if(inputBox.value) inputBox.value.style.height = 'auto';
+                
+                // 1. 彻底由前端掌握 UUID 和极微小的时间差，保证顺序绝对稳定
+                const userId = generateUUID();
+                const aiId = generateUUID();
+                const now = new Date().getTime();
+
+                const userMsg = { id: userId, session_id: currentSessionId.value, role: 'user', content: text, status: 'completed', created_at: new Date(now).toISOString() };
+                const aiMsg = { id: aiId, session_id: currentSessionId.value, role: 'assistant', content: '', status: 'generating', created_at: new Date(now + 10).toISOString() };
+
+                // 2. 乐观更新 UI (最顺滑的体验)
+                messages.value.push(userMsg, aiMsg);
+                
+                // 3. 原子化批量插入数据库
+                await supabaseClient.from('messages').insert([userMsg, aiMsg]);
+                
+                // 4. 调用边缘函数注入灵魂
+                await triggerCloudFunc(aiId);
+            };
+
+            // 中途停止：直接改数据库状态，边缘函数轮询到后就会 Break
+            const stopGeneration = async () => {
+                if (!isLoading.value) return;
+                const genMsg = messages.value.find(m => m.status === 'generating');
+                if (genMsg) {
+                    await supabaseClient.from('messages').update({ status: 'stopped' }).eq('id', genMsg.id);
+                }
+                isLoading.value = false;
+            };
+
+            // 编辑历史：标准裁剪逻辑
+            const saveEdit = async () => {
+                const targetId = editingMessage.value.id;
+                const newContent = editText.value.trim();
+                editingMessage.value = null;
+                
+                const idx = messages.value.findIndex(m => m.id === targetId);
+                
+                // 1. 删除此用户消息【之后】的所有废弃时间线
+                const toDelete = messages.value.slice(idx + 1);
+                if (toDelete.length > 0) await supabaseClient.from('messages').delete().in('id', toDelete.map(m => m.id));
+                
+                // 2. 更新当前用户消息的文本
+                await supabaseClient.from('messages').update({ content: newContent }).eq('id', targetId);
+                
+                // 3. 构建新的 AI 占位并插入
+                const aiId = generateUUID();
+                const aiMsg = { id: aiId, session_id: currentSessionId.value, role: 'assistant', content: '', status: 'generating' };
+                
+                messages.value = messages.value.slice(0, idx + 1);
+                messages.value[idx].content = newContent;
+                messages.value.push(aiMsg);
+                
+                await supabaseClient.from('messages').insert(aiMsg);
+                await triggerCloudFunc(aiId);
+            };
+
+            // 重新生成：删除当前 AI 消息及其后分支，重新请求
+            const regenerate = async (msg) => {
+                if(isLoading.value) return;
+                const idx = messages.value.findIndex(m => m.id === msg.id);
+                
+                // 1. 从数据库删掉这句及后面的话
+                const toDelete = messages.value.slice(idx);
+                await supabaseClient.from('messages').delete().in('id', toDelete.map(m => m.id));
+                
+                // 2. 构建新 AI 占位
+                const aiId = generateUUID();
+                const aiMsg = { id: aiId, session_id: currentSessionId.value, role: 'assistant', content: '', status: 'generating' };
+                
+                messages.value = messages.value.slice(0, idx);
+                messages.value.push(aiMsg);
+                
+                await supabaseClient.from('messages').insert(aiMsg);
+                await triggerCloudFunc(aiId);
+            };
+
+            // ======= UI Utilities =======
+            const handleScroll = () => {
+                if (!chatContainer.value) return;
+                const { scrollTop, scrollHeight, clientHeight } = chatContainer.value;
+                isScrolledToBottom = Math.abs(scrollHeight - clientHeight - scrollTop) < 50;
+            };
+            const smartScroll = () => { if (isScrolledToBottom) scrollToBottom(); };
+            const scrollToBottom = () => { nextTick(() => { if (chatContainer.value) chatContainer.value.scrollTo({ top: chatContainer.value.scrollHeight }); }); };
+
+            const handleEnter = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } };
+            const openEditModal = (msg) => { editingMessage.value = msg; editText.value = msg.content; };
+            const copyText = (t) => navigator.clipboard.writeText(t);
+
+            watch(input, () => {
+                nextTick(() => { if(inputBox.value) { inputBox.value.style.height = 'auto'; inputBox.value.style.height = Math.min(inputBox.value.scrollHeight, 150) + 'px'; } });
+            });
+
+            const renderMarkdown = (text) => {
+                if(!text) return '';
+                const html = marked.parse(text);
+                nextTick(() => {
+                    document.querySelectorAll('pre code').forEach((el) => hljs.highlightElement(el));
+                    document.querySelectorAll('pre').forEach(pre => {
+                        if (!pre.querySelector('.copy-btn')) {
+                            const btn = document.createElement('button');
+                            btn.className = 'copy-btn absolute top-2 right-2 text-gray-400 hover:text-white transition-colors';
+                            btn.innerHTML = '<i class="ph ph-copy text-sm"></i>';
+                            btn.onclick = () => { navigator.clipboard.writeText(pre.querySelector('code').innerText); };
+                            pre.appendChild(btn);
+                        }
+                    });
+                });
+                return html;
+            };
+
+            return {
+                appConfig, tempConfig, isConfigured, sessions, messages, currentSessionId, input, isLoading, showSidebar, showSettings, isDark, editingMessage, editText, chatContainer, inputBox,
+                saveAndInit, createNewSession, loadSession, deleteSession, sendMessage, handleEnter, toggleTheme, renderMarkdown, copyText, regenerate, openEditModal, saveEdit, stopGeneration
+            };
+        }
+    }).mount('#app');
+</script>
+</body>
+</html>
